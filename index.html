@@ -1,195 +1,517 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cervical Debug Pro v2.2</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
-        body { background-color: #0a0a0a; color: #00ff00; font-family: 'JetBrains Mono', monospace; overflow: hidden; }
-        .glow { text-shadow: 0 0 10px #00ff00; }
-        #output_canvas { width: 100%; height: 100%; object-fit: cover; }
-        .status-box { background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(0, 255, 0, 0.3); }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Cervical Debug Pro v2.4 (Android Hardened)</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+    body { background-color: #0a0a0a; color: #00ff00; font-family: 'JetBrains Mono', monospace; overflow: hidden; }
+    .glow { text-shadow: 0 0 10px #00ff00; }
+    #output_canvas { width: 100%; height: 100%; object-fit: cover; }
+    .status-box { background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(0, 255, 0, 0.3); }
+    .hint { color: rgba(255,255,255,0.75); font-size: 10px; line-height: 1.4; white-space: pre-line; }
+    .btn-mini { font-size: 8px; padding: 6px 8px; border: 1px solid rgba(0,255,0,0.25); background: rgba(0,0,0,0.35); }
+    .btn-mini:active { background: rgba(0,255,0,0.15); }
+  </style>
 </head>
+
 <body class="flex flex-col h-screen p-4">
+  <header class="flex justify-between border-b border-green-900 pb-2 mb-2 text-[10px]">
+    <span class="glow">ENGINE: CERVICAL_CORE_V2.4</span>
+    <span id="timestamp"></span>
+  </header>
 
-    <header class="flex justify-between border-b border-green-900 pb-2 mb-2 text-[10px]">
-        <span class="glow">ENGINE: CERVICAL_CORE_V2.2</span>
-        <span id="timestamp"></span>
-    </header>
+  <main class="relative flex-grow border border-green-900 rounded overflow-hidden bg-black">
+    <!-- iOS/Safari/Android 更稳：muted + autoplay + playsinline -->
+    <video id="input_video" class="hidden" playsinline webkit-playsinline muted autoplay></video>
+    <canvas id="output_canvas"></canvas>
 
-    <main class="relative flex-grow border border-green-900 rounded overflow-hidden bg-black">
-        <video id="input_video" class="hidden" playsinline></video>
-        <canvas id="output_canvas"></canvas>
+    <div class="absolute top-2 left-2 space-y-2 z-10">
+      <div class="status-box p-2">
+        <div class="text-[8px] opacity-60 uppercase">Cervical Angle</div>
+        <div id="angle-val" class="text-xl font-bold tracking-tighter">--°</div>
+      </div>
+      <div class="status-box p-2">
+        <div class="text-[8px] opacity-60 uppercase">Mech Load</div>
+        <div id="load-val" class="text-xl font-bold tracking-tighter text-orange-500">--kg</div>
+      </div>
+    </div>
 
-        <div class="absolute top-2 left-2 space-y-2 z-10">
-            <div class="status-box p-2">
-                <div class="text-[8px] opacity-60 uppercase">Cervical Angle</div>
-                <div id="angle-val" class="text-xl font-bold tracking-tighter">--°</div>
-            </div>
-            <div class="status-box p-2">
-                <div class="text-[8px] opacity-60 uppercase">Mech Load</div>
-                <div id="load-val" class="text-xl font-bold tracking-tighter text-orange-500">--kg</div>
-            </div>
+    <!-- Android / WeChat: 方向&镜像工具 -->
+    <div class="absolute top-2 right-2 z-10 flex gap-2">
+      <button id="flip-btn" class="btn-mini opacity-80">FLIP: OFF</button>
+    </div>
+
+    <div id="repair-modal" class="hidden absolute inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-8 text-center">
+      <div class="text-orange-500 animate-pulse mb-2 text-xs font-bold">CRITICAL_OVERLOAD_DETECTED</div>
+      <h2 id="step-title" class="text-xl font-bold mb-4 tracking-tight">系统修复程序</h2>
+      <p id="step-desc" class="text-xs opacity-80 mb-8 leading-relaxed h-12">检测到颈椎力矩异常，请执行以下复位动作。</p>
+      <div id="timer-display" class="text-6xl font-bold mb-10 text-white">10s</div>
+      <button id="repair-action-btn"
+              class="border-2 border-green-500 px-10 py-3 text-sm font-bold active:bg-green-500 active:text-black transition-all">
+        立即执行
+      </button>
+    </div>
+
+    <div id="loading-overlay" class="absolute inset-0 bg-black flex flex-col items-center justify-center z-40">
+      <div class="text-green-500 animate-pulse mb-2">INIT_AI_MODELS...</div>
+      <div id="loading-sub" class="text-[8px] opacity-50">正在加载 MediaPipe Pose 引擎</div>
+      <div id="loading-hint" class="hint mt-3 opacity-80 hidden"></div>
+
+      <!-- 微信需要手势启动：给一个显式按钮最稳 -->
+      <button id="warmup-btn" class="hidden mt-5 border border-green-700 px-6 py-2 text-[10px] uppercase opacity-90">
+        TAP TO START CAMERA
+      </button>
+    </div>
+  </main>
+
+  <footer class="mt-4 flex flex-col gap-3">
+    <div class="flex justify-between text-[8px] opacity-50 uppercase tracking-widest">
+      <span>Stability: <span id="stab-val">0%</span></span>
+      <span>Status: <span id="sys-status">Initializing</span></span>
+    </div>
+    <button id="main-btn" disabled
+            class="w-full bg-green-900/50 text-green-100 py-3 rounded text-[10px] font-bold tracking-widest border border-green-800 transition-all uppercase">
+      等待姿态锁定...
+    </button>
+  </footer>
+
+  <script>
+    // ======================
+    // UA / 环境识别（安卓兼容关键）
+    // ======================
+    const UA = navigator.userAgent || "";
+    const isAndroid = /Android/i.test(UA);
+    const isWeChat = /MicroMessenger/i.test(UA);
+    const isQQ = /\bQQ\//i.test(UA) || /MQQBrowser/i.test(UA);
+
+    // ======================
+    // DOM
+    // ======================
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d', { alpha: false });
+
+    const angleDisplay = document.getElementById('angle-val');
+    const loadDisplay = document.getElementById('load-val');
+    const stabDisplay = document.getElementById('stab-val');
+    const sysStatus = document.getElementById('sys-status');
+
+    const mainBtn = document.getElementById('main-btn');
+    const repairModal = document.getElementById('repair-modal');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingSub = document.getElementById('loading-sub');
+    const loadingHint = document.getElementById('loading-hint');
+    const warmupBtn = document.getElementById('warmup-btn');
+
+    // 镜像开关（安卓/微信体验提升）
+    let mirror = false;
+    const flipBtn = document.getElementById('flip-btn');
+    flipBtn.addEventListener('click', () => {
+      mirror = !mirror;
+      flipBtn.innerText = `FLIP: ${mirror ? "ON" : "OFF"}`;
+    });
+
+    // ======================
+    // 配置（安卓默认更省性能）
+    // ======================
+    const THRESHOLD_ANGLE = 25;
+    const VIS_TH = 0.5;
+
+    const STAB_SMOOTH = 0.15;
+    const ANGLE_SMOOTH = 0.25;
+
+    // 安卓更容易抖：用连续 N 帧触发阈值
+    const OVER_N = isAndroid ? 6 : 3;
+    let overCount = 0;
+
+    const LOAD_BASE = 5;
+    const LOAD_K = 0.45;
+
+    const REPAIR_STEPS = [
+      { title: "STEP 01: 寰枕卸载", desc: "头后缩，手掌抵住后脑勺向后微发力，重塑深层肌肉支撑", time: 10 },
+      { title: "STEP 02: 胸椎复位", desc: "双臂抱头，靠在椅背向上方延展，打开胸廓减压", time: 15 },
+      { title: "STEP 03: 神经激活", desc: "侧头至极限，对侧手掌向下压，解除神经卡压", time: 10 }
+    ];
+
+    let currentStep = 0;
+    let activeTimer = null;
+
+    let lastStable = 0;
+    let lastAngle = null;
+
+    let running = false;
+    let camera = null;
+
+    // ======================
+    // UI：主按钮状态（可回滚）
+    // ======================
+    function setMainBtnSafe() {
+      mainBtn.disabled = true;
+      mainBtn.innerText = "等待姿态锁定...";
+      mainBtn.onclick = null;
+      mainBtn.classList.remove('bg-orange-600', 'border-orange-400');
+      mainBtn.classList.add('bg-green-900/50', 'border-green-800');
+    }
+
+    function setMainBtnCritical() {
+      mainBtn.disabled = false;
+      mainBtn.innerText = "CRITICAL: START REPAIR";
+      mainBtn.classList.remove('bg-green-900/50', 'border-green-800');
+      mainBtn.classList.add('bg-orange-600', 'border-orange-400');
+      mainBtn.onclick = () => {
+        repairModal.classList.remove('hidden');
+        const btn = document.getElementById('repair-action-btn');
+        btn.disabled = false;
+        btn.style.visibility = 'visible';
+        btn.innerText = (currentStep === 0) ? "立即执行" : "NEXT_PHASE";
+
+        const step = REPAIR_STEPS[Math.min(currentStep, REPAIR_STEPS.length - 1)];
+        document.getElementById('step-title').innerText = step.title;
+        document.getElementById('step-desc').innerText = step.desc;
+        document.getElementById('timer-display').innerText = step.time + "s";
+      };
+    }
+
+    // ======================
+    // Canvas：清晰渲染 + Cover Letterbox + 镜像
+    // ======================
+    function fitCanvasToContainer() {
+      const rect = canvasElement.getBoundingClientRect();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const w = Math.floor(rect.width * dpr);
+      const h = Math.floor(rect.height * dpr);
+      if (canvasElement.width !== w || canvasElement.height !== h) {
+        canvasElement.width = w;
+        canvasElement.height = h;
+      }
+    }
+
+    function drawImageCover(image) {
+      const cw = canvasElement.width;
+      const ch = canvasElement.height;
+      const iw = image.width;
+      const ih = image.height;
+
+      const scale = Math.max(cw / iw, ch / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      const dx = (cw - dw) / 2;
+      const dy = (ch - dh) / 2;
+
+      if (mirror) {
+        canvasCtx.save();
+        canvasCtx.translate(cw, 0);
+        canvasCtx.scale(-1, 1);
+        canvasCtx.drawImage(image, -dx - dw, dy, dw, dh);
+        canvasCtx.restore();
+        return { dx, dy, dw, dh, cw, ch, mirrored: true };
+      } else {
+        canvasCtx.drawImage(image, dx, dy, dw, dh);
+        return { dx, dy, dw, dh, cw, ch, mirrored: false };
+      }
+    }
+
+    function toCanvasXY(landmark, t) {
+      const xNorm = t.mirrored ? (1 - landmark.x) : landmark.x;
+      return { x: t.dx + xNorm * t.dw, y: t.dy + landmark.y * t.dh };
+    }
+
+    // ======================
+    // Landmark 选择：左右择优（安卓很关键）
+    // ======================
+    function pickBestPair(landmarks) {
+      const leftEar = landmarks[7], rightEar = landmarks[8];
+      const leftShoulder = landmarks[11], rightShoulder = landmarks[12];
+
+      const leftScore = (leftEar?.visibility || 0) + (leftShoulder?.visibility || 0);
+      const rightScore = (rightEar?.visibility || 0) + (rightShoulder?.visibility || 0);
+
+      if (rightScore > leftScore) {
+        return { ear: rightEar, shoulder: rightShoulder, score: rightScore / 2 };
+      }
+      return { ear: leftEar, shoulder: leftShoulder, score: leftScore / 2 };
+    }
+
+    // ======================
+    // MediaPipe Pose（安卓默认 modelComplexity 0 更稳）
+    // ======================
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+
+    pose.setOptions({
+      modelComplexity: isAndroid ? 0 : 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+
+    function onResults(results) {
+      if (!running) return;
+
+      if (loadingOverlay && loadingOverlay.style.display !== 'none') {
+        loadingOverlay.style.display = 'none';
+      }
+      sysStatus.innerText = "Running";
+
+      fitCanvasToContainer();
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      const t = drawImageCover(results.image);
+
+      if (results.poseLandmarks) {
+        const { ear, shoulder, score } = pickBestPair(results.poseLandmarks);
+
+        const rawStab = Math.max(0, Math.min(100, Math.round(score * 100)));
+        lastStable = lastStable + (rawStab - lastStable) * STAB_SMOOTH;
+        stabDisplay.innerText = Math.round(lastStable) + "%";
+
+        const ok = (ear && shoulder && ear.visibility > VIS_TH && shoulder.visibility > VIS_TH);
+
+        if (ok) {
+          const dx = (shoulder.x - ear.x);
+          const dy = (shoulder.y - ear.y);
+          const angleRaw = Math.abs(Math.atan2(dx, dy) * (180 / Math.PI));
+
+          if (lastAngle === null) lastAngle = angleRaw;
+          lastAngle = lastAngle + (angleRaw - lastAngle) * ANGLE_SMOOTH;
+
+          const angle = lastAngle;
+          const load = (LOAD_BASE + (angle * LOAD_K)).toFixed(1);
+
+          angleDisplay.innerText = `${angle.toFixed(1)}°`;
+          loadDisplay.innerText = `${load}kg`;
+
+          drawMeasures(ear, shoulder, t);
+
+          // 安卓稳定触发：连续 N 帧超过阈值才触发
+          if (angle > THRESHOLD_ANGLE) {
+            overCount++;
+          } else {
+            overCount = Math.max(0, overCount - 1);
+          }
+
+          if (overCount >= OVER_N) setMainBtnCritical();
+          else setMainBtnSafe();
+
+        } else {
+          setMainBtnSafe();
+          overCount = Math.max(0, overCount - 1);
+          lastStable = lastStable + ((rawStab * 0.6) - lastStable) * 0.08;
+          stabDisplay.innerText = Math.round(lastStable) + "%";
+        }
+      } else {
+        setMainBtnSafe();
+        overCount = Math.max(0, overCount - 1);
+        lastStable = lastStable + (0 - lastStable) * 0.10;
+        stabDisplay.innerText = Math.round(lastStable) + "%";
+      }
+
+      canvasCtx.restore();
+    }
+
+    function drawMeasures(ear, shoulder, transform) {
+      const p1 = toCanvasXY(ear, transform);
+      const p2 = toCanvasXY(shoulder, transform);
+
+      canvasCtx.strokeStyle = "#00ff00";
+      canvasCtx.lineWidth = Math.max(2, Math.round((window.devicePixelRatio || 1)));
+
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(p1.x, p1.y);
+      canvasCtx.lineTo(p2.x, p2.y);
+      canvasCtx.stroke();
+    }
+
+    // ======================
+    // 修复交互：防叠加 + 防连点
+    // ======================
+    function executeRepairStep() {
+      const btn = document.getElementById('repair-action-btn');
+      if (activeTimer) return;
+
+      btn.disabled = true;
+      btn.style.visibility = 'hidden';
+
+      const step = REPAIR_STEPS[currentStep];
+      document.getElementById('step-title').innerText = step.title;
+      document.getElementById('step-desc').innerText = step.desc;
+
+      let timeLeft = step.time;
+      document.getElementById('timer-display').innerText = timeLeft + "s";
+
+      activeTimer = setInterval(() => {
+        timeLeft--;
+        document.getElementById('timer-display').innerText = Math.max(0, timeLeft) + "s";
+
+        if (timeLeft <= 0) {
+          clearInterval(activeTimer);
+          activeTimer = null;
+
+          currentStep++;
+
+          if (currentStep < REPAIR_STEPS.length) {
+            const next = REPAIR_STEPS[currentStep];
+            document.getElementById('step-title').innerText = next.title;
+            document.getElementById('step-desc').innerText = next.desc;
+            document.getElementById('timer-display').innerText = next.time + "s";
+
+            btn.style.visibility = 'visible';
+            btn.disabled = false;
+            btn.innerText = "NEXT_PHASE";
+          } else {
+            finishRepair();
+          }
+        }
+      }, 1000);
+    }
+
+    function finishRepair() {
+      if (activeTimer) {
+        clearInterval(activeTimer);
+        activeTimer = null;
+      }
+
+      currentStep = 0;
+
+      repairModal.innerHTML = `
+        <div class="text-green-500 font-bold mb-4">SYSTEM_FIXED</div>
+        <div class="text-[10px] text-left space-y-4 mb-10 leading-relaxed">
+          [INFO] 颈椎力学矢量已重置<br>
+          [INFO] 局部血氧饱和度预期提升: 25%<br>
+          [INFO] 建议维持姿态，2小时后重新巡检
         </div>
-
-        <div id="repair-modal" class="hidden absolute inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-8 text-center">
-            <div class="text-orange-500 animate-pulse mb-2 text-xs font-bold">CRITICAL_OVERLOAD_DETECTED</div>
-            <h2 id="step-title" class="text-xl font-bold mb-4 tracking-tight">系统修复程序</h2>
-            <p id="step-desc" class="text-xs opacity-80 mb-8 leading-relaxed h-12">检测到颈椎力矩异常，请执行以下复位动作。</p>
-            <div id="timer-display" class="text-6xl font-bold mb-10 text-white">10s</div>
-            <button id="repair-action-btn" onclick="executeRepairStep()" class="border-2 border-green-500 px-10 py-3 text-sm font-bold active:bg-green-500 active:text-black transition-all">
-                立即执行
-            </button>
+        <div class="flex gap-3">
+          <button id="snapshot-btn" class="border-2 border-green-500 px-6 py-3 text-xs font-bold active:bg-green-500 active:text-black transition-all">
+            SAVE_SNAPSHOT
+          </button>
+          <button onclick="location.reload()" class="bg-green-600 text-black px-6 py-3 font-bold text-xs">
+            EXIT_AND_SAVE
+          </button>
         </div>
-        
-        <div id="loading-overlay" class="absolute inset-0 bg-black flex flex-col items-center justify-center z-40">
-            <div class="text-green-500 animate-pulse mb-2">INIT_AI_MODELS...</div>
-            <div class="text-[8px] opacity-50">正在加载 MediaPipe Pose 引擎</div>
-        </div>
-    </main>
+      `;
 
-    <footer class="mt-4 flex flex-col gap-3">
-        <div class="flex justify-between text-[8px] opacity-50 uppercase tracking-widest">
-            <span>Stability: <span id="stab-val">0%</span></span>
-            <span>Status: <span id="sys-status">Initializing</span></span>
-        </div>
-        <button id="main-btn" disabled class="w-full bg-green-900/50 text-green-100 py-3 rounded text-[10px] font-bold tracking-widest border border-green-800 transition-all uppercase">
-            等待姿态锁定...
-        </button>
-    </footer>
+      const snapBtn = document.getElementById('snapshot-btn');
+      snapBtn.addEventListener('click', () => {
+        try {
+          const dataUrl = canvasElement.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = `cervical_snapshot_${new Date().toISOString().replace(/[:.]/g,'-')}.png`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } catch (e) {
+          alert("保存失败：请确认浏览器允许下载或使用 HTTPS 打开。");
+        }
+      });
+    }
 
-    <script>
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const angleDisplay = document.getElementById('angle-val');
-        const loadDisplay = document.getElementById('load-val');
-        const mainBtn = document.getElementById('main-btn');
-        const repairModal = document.getElementById('repair-modal');
-        const loadingOverlay = document.getElementById('loading-overlay');
+    window.executeRepairStep = executeRepairStep;
 
-        const REPAIR_STEPS = [
-            { title: "STEP 01: 寰枕卸载", desc: "头后缩，手掌抵住后脑勺向后微发力，重塑深层肌肉支撑", time: 10 },
-            { title: "STEP 02: 胸椎复位", desc: "双臂抱头，靠在椅背向上方延展，打开胸廓减压", time: 15 },
-            { title: "STEP 03: 神经激活", desc: "侧头至极限，对侧手掌向下压，解除神经卡压", time: 10 }
-        ];
-        let currentStep = 0;
+    // ======================
+    // 微信/QQ WebView：强制用户手势 warmup（安卓最常见卡点）
+    // ======================
+    async function warmUpGestureIfNeeded() {
+      if (!(isWeChat || isQQ)) return true;
 
-        // 1. 初始化 Pose 引擎
-        const pose = new Pose({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+      loadingHint.classList.remove('hidden');
+      loadingHint.innerText =
+        "检测到内置浏览器（微信/QQ）：\n" +
+        "部分机型需要一次点击才能启动摄像头。\n" +
+        "请点击下方按钮继续。";
+
+      warmupBtn.classList.remove('hidden');
+
+      return new Promise((resolve) => {
+        warmupBtn.addEventListener('click', () => {
+          warmupBtn.classList.add('hidden');
+          resolve(true);
+        }, { once: true });
+      });
+    }
+
+    // ======================
+    // 启动相机（安卓分辨率更保守 + 失败提示更明确）
+    // ======================
+    async function startCamera() {
+      const isSecure = (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
+      if (!isSecure) {
+        loadingSub.innerText = "SECURITY_LOCKED";
+        loadingHint.classList.remove('hidden');
+        loadingHint.innerText =
+          "需要在 HTTPS 环境下调用摄像头。\n" +
+          "请使用 GitHub Pages / HTTPS 域名打开。\n" +
+          (isAndroid ? "安卓建议：在 Chrome 或系统浏览器打开（微信内置可能不稳定）。" : "");
+        sysStatus.innerText = "Blocked";
+        return;
+      }
+
+      await warmUpGestureIfNeeded();
+
+      try {
+        sysStatus.innerText = "Starting Camera";
+        fitCanvasToContainer();
+
+        // 安卓：更保守的默认分辨率（更省性能、更稳）
+        const targetWidth = isAndroid ? 480 : 640;
+        const targetHeight = isAndroid ? 360 : 480;
+
+        camera = new Camera(videoElement, {
+          onFrame: async () => { await pose.send({ image: videoElement }); },
+          width: targetWidth,
+          height: targetHeight
         });
 
-        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-        pose.onResults(onResults);
+        running = true;
+        setMainBtnSafe();
 
-        // 2. 核心算法回调
-        function onResults(results) {
-            if (loadingOverlay) loadingOverlay.style.display = 'none';
-            document.getElementById('sys-status').innerText = "Running";
+        const repairBtn = document.getElementById('repair-action-btn');
+        repairBtn.addEventListener('click', executeRepairStep);
 
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        await camera.start();
 
-            if (results.poseLandmarks) {
-                const ear = results.poseLandmarks[7]; // 左耳
-                const shoulder = results.poseLandmarks[11]; // 左肩
+      } catch (err) {
+        running = false;
+        sysStatus.innerText = "Camera Error";
 
-                if (ear.visibility > 0.5 && shoulder.visibility > 0.5) {
-                    const dx = (shoulder.x - ear.x);
-                    const dy = (shoulder.y - ear.y);
-                    const angle = Math.abs(Math.atan2(dx, dy) * (180 / Math.PI));
-                    const load = (5 + (angle * 0.45)).toFixed(1);
+        loadingSub.innerText = "CAMERA_PERMISSION_REQUIRED";
+        loadingHint.classList.remove('hidden');
+        loadingHint.innerText =
+          "请允许摄像头权限。\n" +
+          (isAndroid
+            ? "安卓建议：优先用 Chrome/系统浏览器打开。\n若在微信内置浏览器失败：右上角 → 在浏览器打开。\n"
+            : "若你在 iPhone 上：设置 → Safari → 摄像头 → 允许。\n"
+          ) +
+          "也请确认不是无痕模式 / 企业策略禁用。";
 
-                    // 更新 UI
-                    angleDisplay.innerText = `${angle.toFixed(1)}°`;
-                    loadDisplay.innerText = `${load}kg`;
-                    
-                    // 绘制可视化
-                    drawMeasures(ear, shoulder);
+        loadingOverlay.style.display = 'flex';
+        console.error(err);
+      }
+    }
 
-                    // 阈值判断
-                    if (angle > 25) {
-                        mainBtn.disabled = false;
-                        mainBtn.innerText = "CRITICAL: START REPAIR";
-                        mainBtn.classList.add('bg-orange-600', 'border-orange-400');
-                        mainBtn.onclick = () => repairModal.classList.remove('hidden');
-                    }
-                }
-            }
-            canvasCtx.restore();
-        }
+    // ======================
+    // Resize / Timestamp
+    // ======================
+    window.addEventListener('resize', fitCanvasToContainer);
+    setInterval(() => {
+      document.getElementById('timestamp').innerText = new Date().toISOString().slice(11, 19);
+    }, 1000);
 
-        function drawMeasures(ear, shoulder) {
-            const w = canvasElement.width;
-            const h = canvasElement.height;
-            canvasCtx.strokeStyle = "#00ff00";
-            canvasCtx.lineWidth = 2;
-            canvasCtx.beginPath();
-            canvasCtx.moveTo(ear.x * w, ear.y * h);
-            canvasCtx.lineTo(shoulder.x * w, shoulder.y * h);
-            canvasCtx.stroke();
-        }
-
-        // 3. 修复交互逻辑
-        function executeRepairStep() {
-            const btn = document.getElementById('repair-action-btn');
-            btn.style.visibility = 'hidden';
-            
-            const step = REPAIR_STEPS[currentStep];
-            document.getElementById('step-title').innerText = step.title;
-            document.getElementById('step-desc').innerText = step.desc;
-            
-            let timeLeft = step.time;
-            const timer = setInterval(() => {
-                timeLeft--;
-                document.getElementById('timer-display').innerText = timeLeft + "s";
-                if (timeLeft <= 0) {
-                    clearInterval(timer);
-                    currentStep++;
-                    if (currentStep < REPAIR_STEPS.length) {
-                        btn.style.visibility = 'visible';
-                        btn.innerText = "NEXT_PHASE";
-                    } else {
-                        finishRepair();
-                    }
-                }
-            }, 1000);
-        }
-
-        function finishRepair() {
-            repairModal.innerHTML = `
-                <div class="text-green-500 font-bold mb-4">SYSTEM_FIXED</div>
-                <div class="text-[10px] text-left space-y-4 mb-10 leading-relaxed">
-                    [INFO] 颈椎力学矢量已重置<br>
-                    [INFO] 局部血氧饱和度预期提升: 25%<br>
-                    [INFO] 建议维持姿态，2小时后重新巡检
-                </div>
-                <button onclick="location.reload()" class="bg-green-600 text-black px-10 py-3 font-bold text-xs">EXIT_AND_SAVE</button>
-            `;
-        }
-
-        // 4. 启动相机
-        const camera = new Camera(videoElement, {
-            onFrame: async () => { await pose.send({image: videoElement}); },
-            width: 640, height: 480
-        });
-        camera.start();
-
-        // 窗口适配
-        window.addEventListener('resize', () => {
-            canvasElement.width = canvasElement.clientWidth;
-            canvasElement.height = canvasElement.clientHeight;
-        });
-        canvasElement.width = canvasElement.clientWidth;
-        canvasElement.height = canvasElement.clientHeight;
-        setInterval(() => { document.getElementById('timestamp').innerText = new Date().toISOString().slice(11, 19); }, 1000);
-    </script>
+    // 启动
+    startCamera();
+  </script>
 </body>
 </html>
